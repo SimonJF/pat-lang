@@ -14,7 +14,8 @@ def actor(self: ActorMb?): Unit {
     free ->
       ()
     receive Packet() from self ->
-      let dummy = fact(rand(100000)) in
+      let dummy = fact(rand(5)) in
+      print(intToString(dummy));
       actor(self)
   }
 }
@@ -63,7 +64,7 @@ def floodActors(numMessages: Int, actorMbs: List(ActorMb!)): Unit {
 def main(numActors: Int): Unit {
 
   let actorMbs = spawnActors(numActors, nil) in
-  floodActors(1000, actorMbs)
+  floodActors(100, actorMbs)
 }
 
-main(3)
+main(10)

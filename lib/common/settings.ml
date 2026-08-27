@@ -8,6 +8,14 @@ module ReceiveTypingStrategy = struct
                 ("none", Nothing)]  
 end
 
+module SolverBackend = struct
+    type t = Z3 | Native | Compare
+
+    let enum = [("z3", Z3);
+                ("native", Native);
+                ("compare", Compare)]
+end
+
 let verbose = ref false
 let debug = ref false
 let benchmark = ref (-1)
@@ -18,6 +26,7 @@ let join_not_combine = ref false
 let show_ir = ref true
 let show_ref_counting = ref false
 let typecheck_only = ref false
+let solver_backend = ref SolverBackend.Z3
 
 let set : 'a setting -> 'a -> unit = fun setting value ->
     setting := value

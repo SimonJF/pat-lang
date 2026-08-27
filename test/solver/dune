@@ -1,0 +1,3 @@
+(test
+ (name solver_test)
+ (libraries typecheck common unix))

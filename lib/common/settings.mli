@@ -6,6 +6,11 @@ module ReceiveTypingStrategy : sig
     val enum : (string * t) list
 end
 
+module SolverBackend : sig
+    type t = Z3 | Native | Compare
+    val enum : (string * t) list
+end
+
 val verbose : bool setting
 val debug : bool setting
 val benchmark : int setting
@@ -16,6 +21,7 @@ val liberal_datatypes  : bool setting
 val show_ir : bool setting
 val show_ref_counting : bool setting
 val typecheck_only : bool setting
+val solver_backend : SolverBackend.t setting
 
 val set : 'a setting -> 'a -> unit
 val get : 'a setting -> 'a

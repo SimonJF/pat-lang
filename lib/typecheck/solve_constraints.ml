@@ -136,115 +136,7 @@ let substitute_solutions constrs =
             simp) bottom_to_top
 
 (* Satisfiability checking. *)
-module TagBag = Bag.Make(String)
-module PeriodSet = Set.Make(TagBag)
-
-type tag_multiset = TagBag.t
-
-type base = tag_multiset
-type period = tag_multiset
-
-module LinearSet = struct
-    type t = (base * PeriodSet.t)
-
-    let compare (base1, periods1) (base2, periods2) =
-        (* NOTE: We cannot use polymorphic comparisons on bags. *)
-        (* While equality is pretty easy, having an ordering is quite strange. *)
-        (* We use the following comparison:
-            - If both base and periods are equal, return 0.
-            - Compare bases. If nonzero, that's the result.
-            - If zero, then use periods as a tiebreak.
-         *)
-        let base_cmp = TagBag.compare base1 base2 in
-        let periods_cmp = PeriodSet.compare periods1 periods2 in
-        if base_cmp = 0 then
-            periods_cmp
-        else
-            base_cmp
-
-    (* Unit linear set: empty bag and empty set of periods *)
-    let one = (TagBag.empty, PeriodSet.empty)
-
-    (* Singleton linear set: consists of a single tag *)
-    let singleton tag = (TagBag.singleton tag, PeriodSet.empty)
-
-    (* Product of linear sets: sum the multiplicities of the bases,
-       and union the set of periods. *)
-    let product (base1, periods1) (base2, periods2) =
-        (TagBag.sum base1 base2, PeriodSet.union periods1 periods2)
-
-    let pp ppf (base, period) =
-        let open Format in
-
-        let pp_multiset ppf ms =
-            let pp_entry ppf (tag, n) =
-                fprintf ppf "%s ⨉ %d" tag n
-            in
-            fprintf ppf "⟨%a⟩"
-                (pp_print_comma_list pp_entry) (TagBag.elements ms)
-        in
-
-        let pp_multisets ppf =
-            fprintf ppf "{ %a }" (pp_print_comma_list pp_multiset)
-        in
-
-        fprintf ppf "L(%a, %a)"
-            pp_multiset base
-            pp_multisets (PeriodSet.elements period)
-end
-
-module SemiLinearSet = struct
-    include Set.Make(LinearSet)
-
-    let one = singleton (LinearSet.one)
-
-    (* Product of a semilinear set is the pointwise product of each constituent linear set *)
-    let product sl1 sl2 =
-        List.map (fun l1 ->
-            List.map (fun l2 ->
-                LinearSet.product l1 l2
-            ) (elements sl2)
-        ) (elements sl1)
-        |> List.flatten
-        |> of_list
-
-    (* Replicates a linear set by 'promoting' the base to a period:
-        L(C, P)* = { L(<>, {}) U L(C, {C} U P) }
-    *)
-    let replicate (base, periods) =
-        let inner =
-            (base, PeriodSet.union (PeriodSet.singleton base) periods)
-        in
-        of_list [LinearSet.one; inner]
-
-    (* Translates a pattern (commutative regular expression) into a semilinear
-       set. *)
-    let rec of_pattern =
-        let open Pattern in
-        function
-            | PatVar _ -> assert false (* HK resolution will have removed these. *)
-            | One -> one
-            | Zero -> empty
-            | Message tag -> singleton (LinearSet.singleton tag)
-            | Plus (p1, p2) -> union (of_pattern p1) (of_pattern p2)
-            | Concat (p1, p2) -> product (of_pattern p1) (of_pattern p2)
-            | Many p ->
-                (* Replicate all linear sets produced by semantics of p.
-                   This produces a list of semilinear sets. *)
-                let sls_inner =
-                    of_pattern p (* SemiLinearSet*)
-                    |> elements (* [LinearSet]*)
-                    |> List.map replicate (* [SemiLinearSet] *)
-                in
-                (* Concatenate them all using product *)
-                List.fold_left product one sls_inner
-
-    let pp ppf sls =
-        let open Format in
-        let pp_linset ppf = fprintf ppf "{ %a }" LinearSet.pp in
-        pp_print_list ~pp_sep:(fun ppf () -> pp_print_string ppf " ∪ ")
-            pp_linset ppf (elements sls)
-end
+open Semilinear
 
 
 (* The base of a linear set is translated to a conjunction of constraints
@@ -323,9 +215,10 @@ let resolve_constraint resolved_lowers constr =
     let rhs = Pattern.simplify rhs in
     Constraint.make lhs rhs
 
-(* Translates a constraint into a Presburger goal *)
+(* Translates a constraint into the inclusion between semilinear sets that we
+   need to decide. *)
 (* PRECONDITION: Requires the constraint to be fully resolved *)
-let constraint_to_goal constr =
+let constraint_to_semilinear constr =
     let lhs, rhs = Constraint.(lhs constr, rhs constr) in
     Settings.if_debug (fun () ->
         Format.printf "Checking constraint %a\n" Constraint.pp (Constraint.make lhs rhs)
@@ -333,8 +226,11 @@ let constraint_to_goal constr =
     let tags =
         StringSet.union (Pattern.tags lhs) (Pattern.tags rhs)
         |> StringSet.elements in
-    let semilinear_lhs = SemiLinearSet.of_pattern lhs in
-    let semilinear_rhs = SemiLinearSet.of_pattern rhs in
+    (tags, SemiLinearSet.of_pattern lhs, SemiLinearSet.of_pattern rhs)
+
+(* Encodes the inclusion as a Presburger goal, for the benefit of backends that
+   want a formula rather than the semilinear sets themselves. *)
+let semilinear_to_goal (tags, semilinear_lhs, semilinear_rhs) =
     let presburger_lhs = semilinear_to_presburger tags semilinear_lhs in
     let presburger_rhs = semilinear_to_presburger tags semilinear_rhs in
     Presburger.make_goal tags presburger_lhs presburger_rhs
@@ -345,6 +241,8 @@ let constraint_to_goal constr =
  *)
 let check_satisfiability resolved_lowers =
 
+    (* [goal] is lazy: only the Z3 backend needs the Presburger encoding, and we
+       otherwise touch it only when reporting under --debug. *)
     let check_result constr goal =
         let open Format in
         let open Solver_result in
@@ -353,15 +251,15 @@ let check_satisfiability resolved_lowers =
         function
             | Satisfiable ->
                 Settings.if_debug (fun () ->
-                    printf "SATISFIABLE: %a\n" Presburger.pp_goal goal)
+                    printf "SATISFIABLE: %a\n" Presburger.pp_goal (Lazy.force goal))
             | Unsatisfiable ->
                 Settings.if_debug (fun () ->
-                    printf "UNSATISFIABLE: %a\n" Presburger.pp_goal goal
+                    printf "UNSATISFIABLE: %a\n" Presburger.pp_goal (Lazy.force goal)
                 );
                 raise (Errors.constraint_solver_error lhs rhs)
             | Unknown ->
                 Settings.if_debug (fun () ->
-                    printf "DUNNO: %a\n" Presburger.pp_goal goal
+                    printf "DUNNO: %a\n" Presburger.pp_goal (Lazy.force goal)
                 );
                 raise (Errors.constraint_solver_error lhs rhs)
     in
@@ -374,12 +272,49 @@ let check_satisfiability resolved_lowers =
         4) Translate into a Presburger formula
         5) Check validity
      *)
+    (* Runs the native solver, falling back to Z3 on the goals it declines. *)
+    let native_with_fallback (tags, lhs, rhs) goal =
+        match Native_solver.solve tags lhs rhs with
+            | Some result -> result
+            | None -> Z3_solver.solve (Lazy.force goal)
+    in
+
+    (* Runs both backends and reports any disagreement, but defers to Z3 so that
+       turning the comparison on cannot change whether a program typechecks. *)
+    let compare_backends (tags, lhs, rhs) goal =
+        let z3_result = Z3_solver.solve (Lazy.force goal) in
+        let () =
+            match Native_solver.solve tags lhs rhs with
+                | None ->
+                    Format.printf "SOLVER COMPARISON: native solver declined %a\n"
+                        Presburger.pp_goal (Lazy.force goal)
+                | Some native_result when native_result <> z3_result ->
+                    Format.printf
+                        "SOLVER MISMATCH: z3 said %a, native said %a for %a\n"
+                        Solver_result.pp z3_result
+                        Solver_result.pp native_result
+                        Presburger.pp_goal (Lazy.force goal)
+                | Some _ -> ()
+        in
+        z3_result
+    in
+
     List.iter (
         fun constr ->
            let resolved_constr = resolve_constraint resolved_lowers constr in
-           let goal = constraint_to_goal resolved_constr in
-           Z3_solver.solve goal
-             |> check_result resolved_constr goal
+           let semilinear = constraint_to_semilinear resolved_constr in
+           (* The Presburger encoding is only needed by the Z3 backend, and
+              building it is not free, so keep it lazy. *)
+           let goal = lazy (semilinear_to_goal semilinear) in
+           let result =
+               match Settings.(get solver_backend) with
+                   | Settings.SolverBackend.Z3 -> Z3_solver.solve (Lazy.force goal)
+                   | Settings.SolverBackend.Native ->
+                       native_with_fallback semilinear goal
+                   | Settings.SolverBackend.Compare ->
+                       compare_backends semilinear goal
+           in
+           check_result resolved_constr goal result
     )
 
 (* Ensure that none of the patterns are resolved as zero. The type system is only

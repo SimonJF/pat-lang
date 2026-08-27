@@ -23,7 +23,7 @@ let print_ir (prog, _prety, ir, _ty, _env, _constrs) =
         "=== Intermediate Representation: ===\n%a\n\n"
         (Ir.pp_program) ir
 
-let process filename is_verbose is_debug should_show_ir should_show_ref_counting should_typecheck_only mode benchmark_count disable_ql use_join liberal_dts () =
+let process filename is_verbose is_debug should_show_ir should_show_ref_counting should_typecheck_only mode benchmark_count disable_ql use_join liberal_dts backend () =
     Settings.(set verbose is_verbose);
     Settings.(set debug is_debug);
     Settings.(set show_ir should_show_ir);
@@ -34,6 +34,7 @@ let process filename is_verbose is_debug should_show_ir should_show_ref_counting
     Settings.(set disable_quasilinearity disable_ql);
     Settings.(set join_not_combine use_join);
     Settings.(set liberal_datatypes liberal_dts);
+    Settings.(set solver_backend backend);
     try
         Frontend.Parse.parse_file filename ()
         |> Frontend.Pipeline.pipeline
@@ -60,6 +61,8 @@ let () =
     $ Arg.(value & flag & info ["q"; "disable-quasilinearity"] ~doc:"disable quasilinearity checking")
     $ Arg.(value & flag & info ["j"; "join-not-combine"] ~doc:"use sequential join for value subterms, rather than requiring disjointness")
     $ Arg.(value & flag & info ["dt"; "liberal-datatypes"] ~doc:"allow data contained in datatypes to be usable (may impact soundness)")
+    $ Arg.(value & opt (enum Settings.SolverBackend.enum) Settings.SolverBackend.Z3 & info ["solver"]
+      ~docv:"SOLVER" ~doc:"backend used to decide pattern inclusions (allowed: z3, native, compare)")
     $ const ()) in
   let info = Cmd.info "pat" ~doc:"Typechecker and interpreter for the Pat programming language" in
   Cmd.v info pat_t

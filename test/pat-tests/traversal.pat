@@ -14,13 +14,17 @@ def traverse(t : Tree(Int)) : List(Int) {
   }
 }
 
+def printIntList(lst: List(Int)): Unit {
+    case lst of {
+        | nil -> ()
+        | (x :: xs) -> print(intToString(x)); printIntList(xs)
+    }
+}
+
 def main() : Unit {
     let t = Node(Node(Leaf(3), Leaf(1)), Node(Leaf(4), Leaf(1))) in
     let xs = traverse(t) in
-    case xs of {
-      nil -> print("Impossible!")
-      | (y :: ys) -> print(intToString(y))
-    }
+    printIntList(xs)
 }
 
 main()
