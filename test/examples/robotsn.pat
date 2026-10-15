@@ -43,13 +43,13 @@ def busyDoor(self: Door?): Unit {
                     guard self : WantLeave . TableIdle . Want* {
                         receive WantLeave(robot) from self ->
                             robot ! GoOut(self);
-                            finaliseDoor(self, warehouse)
+                            finaliseDoor(self)
                     }
             }
     }
 }
 
-def finaliseDoor(self: Door?, warehouse: Warehouse!): Unit {
+def finaliseDoor(self: Door?): Unit {
     guard self : Outside . TableIdle . Want* {
         receive Outside() from self ->
             guard self : TableIdle . Want* {
